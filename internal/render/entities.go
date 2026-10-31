@@ -2,7 +2,6 @@ package render
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/imtaqin/telegram-cli/internal/telegram"
@@ -20,25 +19,22 @@ func EntitiesToMarkdown(text *telegram.FormattedText) string {
 
 	runes := []rune(text.Text)
 
-	// Sort entities by offset.
-	entities := make([]*telegram.TextEntity, len(text.Entities))
-	copy(entities, text.Entities)
-	sort.Slice(entities, func(i, j int) bool {
-		return entities[i].Offset < entities[j].Offset
-	})
-
 	var b strings.Builder
-	lastEnd := int32(0)
+	lastEnd := 0
 
-	for _, e := range entities {
+	for _, span := range entitySpans(runes, text.Entities) {
+		// This flat renderer retains the enclosing formatting for overlaps.
+		if span.start < lastEnd {
+			continue
+		}
 		// Append text before this entity.
-		if e.Offset > lastEnd {
-			b.WriteString(string(runes[lastEnd:e.Offset]))
+		if span.start > lastEnd {
+			b.WriteString(string(runes[lastEnd:span.start]))
 		}
 
-		entityText := string(runes[e.Offset : e.Offset+e.Length])
+		entityText := string(runes[span.start:span.end])
 
-		switch t := e.Type.(type) {
+		switch t := span.entity.Type.(type) {
 		case *telegram.TextEntityTypeBold:
 			b.WriteString("**")
 			b.WriteString(entityText)
@@ -116,11 +112,11 @@ func EntitiesToMarkdown(text *telegram.FormattedText) string {
 			b.WriteString(entityText)
 		}
 
-		lastEnd = e.Offset + e.Length
+		lastEnd = span.end
 	}
 
 	// Append remaining text.
-	if lastEnd < int32(len(runes)) {
+	if lastEnd < len(runes) {
 		b.WriteString(string(runes[lastEnd:]))
 	}
 
@@ -138,23 +134,21 @@ func EntitiesToANSI(text *telegram.FormattedText) string {
 	}
 
 	runes := []rune(text.Text)
-	entities := make([]*telegram.TextEntity, len(text.Entities))
-	copy(entities, text.Entities)
-	sort.Slice(entities, func(i, j int) bool {
-		return entities[i].Offset < entities[j].Offset
-	})
 
 	var b strings.Builder
-	lastEnd := int32(0)
+	lastEnd := 0
 
-	for _, e := range entities {
-		if e.Offset > lastEnd {
-			b.WriteString(string(runes[lastEnd:e.Offset]))
+	for _, span := range entitySpans(runes, text.Entities) {
+		if span.start < lastEnd {
+			continue
+		}
+		if span.start > lastEnd {
+			b.WriteString(string(runes[lastEnd:span.start]))
 		}
 
-		entityText := string(runes[e.Offset : e.Offset+e.Length])
+		entityText := string(runes[span.start:span.end])
 
-		switch e.Type.(type) {
+		switch span.entity.Type.(type) {
 		case *telegram.TextEntityTypeBold:
 			b.WriteString("\033[1m")
 			b.WriteString(entityText)
@@ -179,10 +173,10 @@ func EntitiesToANSI(text *telegram.FormattedText) string {
 			b.WriteString(entityText)
 		}
 
-		lastEnd = e.Offset + e.Length
+		lastEnd = span.end
 	}
 
-	if lastEnd < int32(len(runes)) {
+	if lastEnd < len(runes) {
 		b.WriteString(string(runes[lastEnd:]))
 	}
 
