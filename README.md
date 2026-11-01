@@ -291,8 +291,8 @@ Register the server in your MCP client, e.g.:
 ### Run
 
 ```bash
-bin/telegram-api login &  # if not already logged in via tele-tui or telegram-mcp
-bin/telegram-api serve    # listens on 127.0.0.1:8080
+bin/telegram-api login  # interactive; skip if already logged in via telegram-mcp
+bin/telegram-api serve  # listens on 127.0.0.1:8080
 ```
 
 It binds **127.0.0.1 only** by default (no auth token needed). Change the address with `-addr` or the `TELETUI_API_ADDR` env var:
@@ -333,6 +333,14 @@ curl -s -X POST http://127.0.0.1:8080/api/send \
 | POST | `/api/edit` | Edit message `{chat_id, message_id, text}` |
 | POST | `/api/mark-read` | Mark read `{chat_id, message_ids[]}` |
 | GET | `/api/media?chat_id=&message_id=` | Download message media, returns local path |
+
+`limit` must be a positive signed 32-bit integer and is capped at 100.
+`from_message_id` must be nonnegative; `offset` accepts negative values for
+relative pagination. Both must fit a signed 32-bit integer. Chat IDs remain
+64-bit integers. Invalid numeric parameters return HTTP 400.
+
+JSON request bodies must contain exactly one value. Trailing whitespace is
+accepted; additional JSON values or trailing non-JSON data return HTTP 400.
 
 Errors are JSON (`{"error": "..."}`) with status 400 (bad params), 404 (unknown route/chat), or 502 (upstream Telegram error).
 

@@ -201,8 +201,9 @@ func MessagePreview(m *telegram.Message) string {
 	typ, text := contentSummary(m)
 	if text != "" {
 		const maxLen = 80
-		if len(text) > maxLen {
-			text = text[:maxLen] + "..."
+		runes := []rune(text)
+		if len(runes) > maxLen {
+			text = string(runes[:maxLen]) + "..."
 		}
 		return text
 	}

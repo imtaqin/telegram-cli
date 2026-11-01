@@ -5,6 +5,7 @@ package restapi
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -128,8 +129,11 @@ func (s *Server) me(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) chats(w http.ResponseWriter, r *http.Request) {
-	limit := intQuery(r, "limit", 50)
-	chats, err := s.tg.ListChats(limit)
+	limit, ok := limitQuery(w, r, 50)
+	if !ok {
+		return
+	}
+	chats, err := s.tg.ListChats(int(limit))
 	if err != nil {
 		writeTelegramError(w, err)
 		return
@@ -147,11 +151,24 @@ func (s *Server) chatHistory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid chat id")
 		return
 	}
-	limit := int32(intQuery(r, "limit", 50))
-	fromID := int64(intQuery(r, "from_message_id", 0))
-	offset := int32(intQuery(r, "offset", 0))
+	limit, ok := limitQuery(w, r, 50)
+	if !ok {
+		return
+	}
+	fromID, ok := intQuery(w, r, "from_message_id", 0)
+	if !ok {
+		return
+	}
+	if fromID < 0 {
+		writeError(w, http.StatusBadRequest, "invalid parameter: from_message_id must not be negative")
+		return
+	}
+	offset, ok := intQuery(w, r, "offset", 0)
+	if !ok {
+		return
+	}
 
-	msgs, err := s.tg.GetChatHistory(chatID, fromID, offset, limit)
+	msgs, err := s.tg.GetChatHistory(chatID, int64(fromID), offset, limit)
 	if err != nil {
 		writeTelegramError(w, err)
 		return
@@ -165,7 +182,10 @@ func (s *Server) searchChats(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "missing required parameter: q")
 		return
 	}
-	limit := int32(intQuery(r, "limit", 20))
+	limit, ok := limitQuery(w, r, 20)
+	if !ok {
+		return
+	}
 
 	chats, err := s.tg.SearchChats(q, limit)
 	if err != nil {
@@ -185,7 +205,10 @@ func (s *Server) searchMessages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "missing required parameter: q")
 		return
 	}
-	limit := int32(intQuery(r, "limit", 20))
+	limit, ok := limitQuery(w, r, 20)
+	if !ok {
+		return
+	}
 
 	msgs, err := s.tg.SearchMessages(q, limit)
 	if err != nil {
@@ -355,23 +378,47 @@ func writeTelegramError(w http.ResponseWriter, err error) {
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(v); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+		return false
+	}
+	var extra json.RawMessage
+	if err := decoder.Decode(&extra); err != io.EOF {
+		writeError(w, http.StatusBadRequest, "invalid JSON body: expected a single JSON value")
 		return false
 	}
 	return true
 }
 
-func intQuery(r *http.Request, name string, def int) int {
+func intQuery(w http.ResponseWriter, r *http.Request, name string, def int32) (int32, bool) {
 	v := r.URL.Query().Get(name)
 	if v == "" {
-		return def
+		return def, true
 	}
-	n, err := strconv.Atoi(v)
+	// Telegram integer fields are signed 32-bit values. Validate before
+	// converting so large client arguments cannot silently wrap around.
+	n, err := strconv.ParseInt(v, 10, 32)
 	if err != nil {
-		return def
+		writeError(w, http.StatusBadRequest, "invalid parameter: "+name+" must be a 32-bit integer")
+		return 0, false
 	}
-	return n
+	return int32(n), true
+}
+
+func limitQuery(w http.ResponseWriter, r *http.Request, def int32) (int32, bool) {
+	limit, ok := intQuery(w, r, "limit", def)
+	if !ok {
+		return 0, false
+	}
+	if limit <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid parameter: limit must be positive")
+		return 0, false
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	return limit, true
 }
 
 func toMessagesOut(msgs []*telegram.Message) messagesOut {
