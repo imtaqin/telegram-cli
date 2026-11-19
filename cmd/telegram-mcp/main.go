@@ -264,17 +264,12 @@ func runServe(cfg *config.Config) {
 		close(ready)
 	}()
 
-	select {
-	case <-ready:
-	case err := <-errCh:
+	if err := waitForClientReady(ready, errCh, time.After(90*time.Second)); err != nil {
 		if errors.Is(err, telegram.ErrLoginRequired) {
 			fmt.Fprintln(os.Stderr, loginHint)
 		} else {
 			fmt.Fprintf(os.Stderr, "telegram client error: %v\n", err)
 		}
-		os.Exit(1)
-	case <-time.After(90 * time.Second):
-		fmt.Fprintln(os.Stderr, loginHint)
 		os.Exit(1)
 	}
 
@@ -285,5 +280,17 @@ func runServe(cfg *config.Config) {
 
 	if err := srv.Run(ctx); err != nil {
 		log.Fatalf("mcp server: %v", err)
+	}
+}
+
+// A readiness timeout does not establish that the session is unauthorized.
+func waitForClientReady(ready <-chan struct{}, errs <-chan error, timeout <-chan time.Time) error {
+	select {
+	case <-ready:
+		return nil
+	case err := <-errs:
+		return err
+	case <-timeout:
+		return errors.New("timed out waiting for Telegram client readiness; check network connectivity and retry")
 	}
 }
